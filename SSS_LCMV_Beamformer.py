@@ -35,10 +35,8 @@ sample_data_raw_file = os.path.join(
     sample_data_folder, "MEG", "sample", "sample_audvis_raw.fif"
 )
 
-raw = mne.io.read_raw_fif(raw_fname, verbose=False)
+raw = mne.io.read_raw_fif(raw_fname)
 #raw.crop(tmax=60)
-
-raw.pick(["meg"])  # pick channels of interest
 
 # get rid of unnecessary projectors
 
@@ -70,6 +68,47 @@ new_raw_ch_names = good_channels_from_raw
 data_cov = mne.compute_raw_covariance(raw)
 noise_cov = mne.compute_raw_covariance(raw, tmin = 0, tmax = .9)
 
+
+        
+        # data_cov.plot(raw.info)
+        
+        
+        # # cov for epochs to compare
+        
+        # event_id = 1  # those are the trials with left-ear auditory stimuli
+        # tmin, tmax = -0.2, 0.5
+        # events = mne.find_events(raw)
+        
+        # # pick relevant channels
+        # raw.pick(["meg", "eog"])  # pick channels of interest
+        
+        # # Create epochs
+        # proj = False  # already applied
+        # epochs = mne.Epochs(
+        #     raw,
+        #     events,
+        #     event_id,
+        #     tmin,
+        #     tmax,
+        #     baseline=(None, 0),
+        #     preload=True,
+        #     proj=proj,
+        #     reject=dict(grad=4000e-13, mag=4e-12, eog=150e-6),
+        # )
+        
+        # # for speed purposes, cut to a window of interest
+        # evoked = epochs.average().crop(0.05, 0.15)
+        
+        # # Visualize averaged sensor space data
+        # evoked.plot_joint()
+        
+        # data_cov = mne.compute_covariance(epochs, tmin=0.01, tmax=0.25, method="empirical")
+        # noise_cov = mne.compute_covariance(epochs, tmin=tmin, tmax=0, method="empirical")
+        # data_cov.plot(epochs.info)
+        # del epochs
+        
+
+
 # %%
 # Read forward model
 fwd_fname = meg_path / "sample_audvis-meg-vol-7-fwd.fif"
@@ -90,10 +129,63 @@ pS_in = pS[:n_use_in]
 pS_in_T = pS_in.transpose()
 
 
-# normalize columns of S
 
 # condition number of S
 # get SVD, ratio of smallest and largest singular value 
+
+
+reduced_S = S.copy()
+
+ST_S = reduced_S.transpose() @ reduced_S
+
+while np.linalg.cond(ST_S, None) >= 10**5:
+    cond_compare_list =[]
+    for n in range(reduced_S.shape[1]):
+        reduced_S_copy = reduced_S.copy()
+        reduced_S_n = np.delete(reduced_S_copy, n, axis=1)
+        ST_S = reduced_S_n.transpose() @ reduced_S_n
+        cond_n = np.linalg.cond(ST_S, None)
+        cond_compare_list.append(cond_n)
+    
+    if not cond_compare_list :
+        print("cond_compare_list is empty. Breaking loop.")
+        break 
+
+    min_value = min(cond_compare_list)
+    min_index = cond_compare_list.index(min_value)
+    reduced_S = np.delete(reduced_S, min_index, axis=1)
+    ST_S = reduced_S.transpose() @ reduced_S
+    print(f"Current condition number: {np.linalg.cond(ST_S, None):.2e}")
+
+
+
+# doing above to S_in
+
+reduced_S_in = S_in.copy()
+ST_S = reduced_S_in.transpose() @ reduced_S_in
+
+while np.linalg.cond(ST_S, None) >= 10**5:
+    cond_compare_list =[]
+    for n in range(reduced_S_in.shape[1]):
+        reduced_S_in_copy = reduced_S_in.copy()
+        reduced_S_in_n = np.delete(reduced_S_in_copy, n, axis=1)
+        ST_S = reduced_S_in_n.transpose() @ reduced_S_in_n
+        cond_n = np.linalg.cond(ST_S, None)
+        cond_compare_list.append(cond_n)
+    
+    if not cond_compare_list :
+        print("cond_compare_list is empty. Breaking loop.")
+        break 
+
+    min_value = min(cond_compare_list)
+    min_index = cond_compare_list.index(min_value)
+    reduced_S_in = np.delete(reduced_S_in, min_index, axis=1)
+    ST_S = reduced_S_in.transpose() @ reduced_S_in
+    print(f"Current condition number: {np.linalg.cond(ST_S, None):.2e}")
+
+
+
+
 
 
 # to mitigate: regularization
@@ -130,6 +222,20 @@ print(pS_from_S_no_bads.shape)
 
 
 
+
+# reducing condition number of ST_S
+
+column_norms_pS_from_S = np.linalg.norm(pS_from_S_no_bads, axis=0, keepdims=True)
+
+n_pS_from_S = pS_from_S_no_bads / column_norms_pS_from_S
+
+
+
+print(np.linalg.cond(pS_from_S,None))
+print(np.linalg.cond(pS_from_S_no_bads,None))
+print(np.linalg.cond(n_pS_from_S,None))
+
+
 # Getting pS from S
 
 column_norms_pS_from_S = np.linalg.norm(pS_from_S_no_bads, axis=0, keepdims=True)
@@ -151,7 +257,6 @@ n_pS = pS_in / column_norms_pS
 
 print(np.linalg.cond(pS_in,None))
 print(np.linalg.cond(n_pS,None))
-
 
 
 
@@ -313,8 +418,6 @@ sss_forward = change_of_lead_fields_basis(forward, n_pS_from_S, sss_channels)
 # making lcmv. (what should reg be?)
 
 
-print(sss_raw.info['bads'])
-print(sss_noise_cov['bads'])
 
 #%%
 # modifications before filter
