@@ -8,15 +8,65 @@ Created on Sun May 18 21:17:50 2025
 
 import os
 
-import matplotlib.pyplot as plt
 
 import mne
-from mne.beamformer import apply_lcmv, make_lcmv
-from mne.datasets import fetch_fsaverage, sample
+from mne.beamformer import apply_lcmv_cov, make_lcmv
+from mne.datasets import sample
 import numpy as np
-import pandas as pd
-import seaborn as sns
+import matplotlib.pyplot as plt
 
+# %%
+
+
+data_path = sample.data_path()
+
+# the raw file containing the channel location + types
+sample_dir = data_path / "MEG" / "sample"
+raw_fname = sample_dir / "sample_audvis_raw.fif"
+# The paths to Freesurfer reconstructions
+subjects_dir = data_path / "subjects"
+subject = "sample"
+
+
+raw = mne.io.read_raw_fif(raw_fname, preload = True)
+raw.info["bads"] += ["MEG 2443"]
+
+# %%
+
+# The transformation file obtained by coregistration
+trans = sample_dir / "sample_audvis_raw-trans.fif"
+
+info = mne.io.read_info(raw_fname)
+
+
+# %%
+surface = subjects_dir / subject / "bem" / "inner_skull.surf"
+vol_src = mne.setup_volume_source_space(
+    subject, subjects_dir=subjects_dir, surface=surface, add_interpolator=False
+)
+
+# %%
+conductivity = (0.3,)  # for single layer
+# conductivity = (0.3, 0.006, 0.3)  # for three layers
+model = mne.make_bem_model(
+    subject="sample", ico=4, conductivity=conductivity, subjects_dir=subjects_dir
+)
+bem = mne.make_bem_solution(model)
+
+
+# %%
+
+fwd = mne.make_forward_solution(
+    raw.info,
+    trans=trans,
+    src=vol_src,
+    bem=bem,
+    meg=True,
+    eeg=False,
+    mindist=5.0,
+    n_jobs=None,
+    verbose=True,
+)
 
 
 # %%
@@ -35,8 +85,7 @@ sample_data_raw_file = os.path.join(
     sample_data_folder, "MEG", "sample", "sample_audvis_raw.fif"
 )
 
-raw = mne.io.read_raw_fif(raw_fname)
-#raw.crop(tmax=60)
+raw = mne.io.read_raw_fif(raw_fname, preload = True)
 
 # get rid of unnecessary projectors
 
@@ -51,16 +100,87 @@ crosstalk_file = os.path.join(sample_data_folder, "SSS", "ct_sparse_mgh.fif")
 # find bad channels then input here using find_bad_channels_maxwell()
 raw.info["bads"] += ["MEG 2443"]
 
+raw.pick(['meg'])
 
+
+mag_picks = mne.pick_types(raw.info, meg='mag', exclude='bads')
 
 #raw_sss = mne.preprocessing.maxwell_filter(
 #    raw, cross_talk=crosstalk_file, calibration=fine_cal_file, verbose=True
 #)
 
-# getting good channels
+# getting good channels and index of bads
 good_channels_from_raw = [ch for ch in raw.ch_names if ch not in raw.info['bads']]
 new_raw_ch_names = good_channels_from_raw
 
+
+meg_channel_names = raw.ch_names
+
+bad_index = meg_channel_names.index("MEG 2443")
+
+
+# %%
+
+# rescale gradiometers by 100
+
+def mag_scaling_lead_field_update(fwd, mag_picks):
+    # getting attributes of forward
+    forward_copy = fwd.copy()
+    sol = forward_copy['sol']
+    data = sol['data']
+    
+    # updating lead field "mag" scale
+    data[mag_picks] *= 100
+    
+    # dropping bad row
+    #np.delete(data_w_scaling, bad_index, 1)
+    
+    forward_copy['sol']['data'] = data
+    
+    return forward_copy
+
+
+forward = mag_scaling_lead_field_update(fwd, mag_picks)
+
+
+
+forward.pick_channels(new_raw_ch_names)
+
+
+raw.rescale({"mag":100})
+# %%
+
+# getting evoked
+
+
+
+
+
+
+
+
+# %%
+
+# find 100 ms after strongest evoked take signal from each vector, find subspace angle between that vector and normalized column matrix of S
+
+# tells us how well basis matches data
+
+# should be below .1 radians
+
+# larger than 0.3 suggests something is wrong
+
+
+# %%
+
+# grad vs mag
+
+# mag measures flux
+
+# other two, grad, measures difference in flux, less senstive to homogenous fields
+
+# usually multiply mag by 100
+
+# make sure scaling is done for all data 
 
 # %%
 
@@ -68,53 +188,6 @@ new_raw_ch_names = good_channels_from_raw
 data_cov = mne.compute_raw_covariance(raw)
 noise_cov = mne.compute_raw_covariance(raw, tmin = 0, tmax = .9)
 
-
-        
-        # data_cov.plot(raw.info)
-        
-        
-        # # cov for epochs to compare
-        
-        # event_id = 1  # those are the trials with left-ear auditory stimuli
-        # tmin, tmax = -0.2, 0.5
-        # events = mne.find_events(raw)
-        
-        # # pick relevant channels
-        # raw.pick(["meg", "eog"])  # pick channels of interest
-        
-        # # Create epochs
-        # proj = False  # already applied
-        # epochs = mne.Epochs(
-        #     raw,
-        #     events,
-        #     event_id,
-        #     tmin,
-        #     tmax,
-        #     baseline=(None, 0),
-        #     preload=True,
-        #     proj=proj,
-        #     reject=dict(grad=4000e-13, mag=4e-12, eog=150e-6),
-        # )
-        
-        # # for speed purposes, cut to a window of interest
-        # evoked = epochs.average().crop(0.05, 0.15)
-        
-        # # Visualize averaged sensor space data
-        # evoked.plot_joint()
-        
-        # data_cov = mne.compute_covariance(epochs, tmin=0.01, tmax=0.25, method="empirical")
-        # noise_cov = mne.compute_covariance(epochs, tmin=tmin, tmax=0, method="empirical")
-        # data_cov.plot(epochs.info)
-        # del epochs
-        
-
-
-# %%
-# Read forward model
-fwd_fname = meg_path / "sample_audvis-meg-vol-7-fwd.fif"
-forward = mne.read_forward_solution(fwd_fname)
-
-forward.pick_channels(new_raw_ch_names,True)
 
 # %%
 
@@ -130,11 +203,25 @@ pS_in_T = pS_in.transpose()
 
 
 
-# condition number of S
-# get SVD, ratio of smallest and largest singular value 
+# column normalization of S
+
+ST_S = S.transpose() @ S
+#print(np.linalg.cond(ST_S,None))
+
+# print(np.linalg.cond(S,None))
+col_n_S = np.linalg.norm(S, axis=0)
+
+n_S = S / col_n_S
+
+ST_S_norm = n_S.transpose() @ n_S
+
+#print(np.linalg.cond(ST_S_norm,None))
 
 
-reduced_S = S.copy()
+
+# removing column vectors to reduce condition number of S transpose @ S
+
+reduced_S = n_S.copy()
 
 ST_S = reduced_S.transpose() @ reduced_S
 
@@ -161,45 +248,27 @@ while np.linalg.cond(ST_S, None) >= 10**5:
 
 # doing above to S_in
 
-reduced_S_in = S_in.copy()
-ST_S = reduced_S_in.transpose() @ reduced_S_in
+# reduced_S_in = S_in.copy()
+# ST_S = reduced_S_in.transpose() @ reduced_S_in
 
-while np.linalg.cond(ST_S, None) >= 10**5:
-    cond_compare_list =[]
-    for n in range(reduced_S_in.shape[1]):
-        reduced_S_in_copy = reduced_S_in.copy()
-        reduced_S_in_n = np.delete(reduced_S_in_copy, n, axis=1)
-        ST_S = reduced_S_in_n.transpose() @ reduced_S_in_n
-        cond_n = np.linalg.cond(ST_S, None)
-        cond_compare_list.append(cond_n)
+# while np.linalg.cond(ST_S, None) >= 10**5:
+#     cond_compare_list =[]
+#     for n in range(reduced_S_in.shape[1]):
+#         reduced_S_in_copy = reduced_S_in.copy()
+#         reduced_S_in_n = np.delete(reduced_S_in_copy, n, axis=1)
+#         ST_S = reduced_S_in_n.transpose() @ reduced_S_in_n
+#         cond_n = np.linalg.cond(ST_S, None)
+#         cond_compare_list.append(cond_n)
     
-    if not cond_compare_list :
-        print("cond_compare_list is empty. Breaking loop.")
-        break 
+#     if not cond_compare_list :
+#         print("cond_compare_list is empty. Breaking loop.")
+#         break 
 
-    min_value = min(cond_compare_list)
-    min_index = cond_compare_list.index(min_value)
-    reduced_S_in = np.delete(reduced_S_in, min_index, axis=1)
-    ST_S = reduced_S_in.transpose() @ reduced_S_in
-    print(f"Current condition number: {np.linalg.cond(ST_S, None):.2e}")
-
-
-
-
-
-
-# to mitigate: regularization
-# column normalize
-# can reverse normalization
-
-# print(np.linalg.cond(S_in,None))
-column_norms = np.linalg.norm(S_in, axis=0)
-
-# Normalize each column by dividing by its norm
-# Use broadcasting for efficient division
-n_S = S_in / column_norms
-
-# print(np.linalg.cond(n_S,None))
+#     min_value = min(cond_compare_list)
+#     min_index = cond_compare_list.index(min_value)
+#     reduced_S_in = np.delete(reduced_S_in, min_index, axis=1)
+#     ST_S = reduced_S_in.transpose() @ reduced_S_in
+#     print(f"Current condition number: {np.linalg.cond(ST_S, None):.2e}")
 
 
 # calculating our own pseudo inverse from S_in
@@ -212,51 +281,18 @@ meg_channel_names = raw.ch_names
 
 bad_index = meg_channel_names.index("MEG 2443")
 
-print(bad_index)
+
 
 # cutting bad column from pS
 
 pS_from_S_no_bads = np.delete(pS_from_S, bad_index, 1)
 
-print(pS_from_S_no_bads.shape)
 
 
 
+# getting final pS internal
 
-# reducing condition number of ST_S
-
-column_norms_pS_from_S = np.linalg.norm(pS_from_S_no_bads, axis=0, keepdims=True)
-
-n_pS_from_S = pS_from_S_no_bads / column_norms_pS_from_S
-
-
-
-print(np.linalg.cond(pS_from_S,None))
-print(np.linalg.cond(pS_from_S_no_bads,None))
-print(np.linalg.cond(n_pS_from_S,None))
-
-
-# Getting pS from S
-
-column_norms_pS_from_S = np.linalg.norm(pS_from_S_no_bads, axis=0, keepdims=True)
-
-n_pS_from_S = pS_from_S_no_bads / column_norms_pS_from_S
-
-
-
-print(np.linalg.cond(pS_from_S,None))
-print(np.linalg.cond(pS_from_S_no_bads,None))
-print(np.linalg.cond(n_pS_from_S,None))
-
-
-
-# normalizing pS from compute maxwell basis (large condition number is issue)
-column_norms_pS = np.linalg.norm(pS_in, axis=0, keepdims=True)
-
-n_pS = pS_in / column_norms_pS
-
-print(np.linalg.cond(pS_in,None))
-print(np.linalg.cond(n_pS,None))
+pS_final = pS_from_S_no_bads[:n_use_in, :]
 
 
 
@@ -285,10 +321,16 @@ def change_of_raw_info_to_sss(raw, old_channel_names, sss_channels):
     for n in range(n_use_in):
         ch_dict_mapping[raw.info['ch_names'][n]] = sss_channels[n]
     new_raw.rename_channels(ch_dict_mapping)
+
+    # Create a mapping to set all channels to 'mag'
+    channel_type_mapping = {ch_name: 'mag' for ch_name in new_raw.info['ch_names']}
+
+    # Update the channel types in the info object
+    new_raw.info.set_channel_types(channel_type_mapping)
+    
     return new_raw
 
 sss_raw = change_of_raw_info_to_sss(raw, new_raw_ch_names, sss_channels)    
-
 
 
 # pass through maxwellfilter to then use info for lcmv 
@@ -297,18 +339,18 @@ sss_raw = change_of_raw_info_to_sss(raw, new_raw_ch_names, sss_channels)
 
 #changing covariance
 def change_of_cov_basis_into_sss(
-    covariance, pS_in, new_ch_names: list = None
+    covariance, pS_final, new_ch_names: list = None
     ):
 
     #preparing for transformation
     
     cov_data = covariance.data
-    pS_T = pS_in.transpose()
+    pS_T = pS_final.transpose()
     
     
     #getting new attributes
     transformed_cov_data1 = cov_data @ pS_T
-    transformed_cov_data2 = pS_in @ transformed_cov_data1
+    transformed_cov_data2 = pS_final @ transformed_cov_data1
     
     new_n_channels = transformed_cov_data2.shape[0]
     new_ch_names = [f'MEG {i+1:04d}' for i in range(new_n_channels)]
@@ -325,8 +367,43 @@ def change_of_cov_basis_into_sss(
     
 
 
-sss_data_cov = change_of_cov_basis_into_sss(data_cov, pS_from_S_no_bads)
-sss_noise_cov = change_of_cov_basis_into_sss(noise_cov, pS_from_S_no_bads)
+# for setting off diagonal noise covariance terms to zero
+def change_of_cov_basis_into_sss_and_drop_off_diag_terms(
+    covariance, pS_final, new_ch_names: list = None
+    ):
+
+    #preparing for transformation
+    
+    cov_data = covariance.data
+    pS_T = pS_final.transpose()
+    
+    
+    #getting new attributes
+    transformed_cov_data1 = cov_data @ pS_T
+    transformed_cov_data2 = pS_final @ transformed_cov_data1
+    
+    diag_terms = np.diag(transformed_cov_data2)
+    transformed_cov_data3 = np.diag(diag_terms)
+    
+    new_n_channels = transformed_cov_data2.shape[0]
+    new_ch_names = [f'MEG {i+1:04d}' for i in range(new_n_channels)]
+    
+    transformed_covariance = mne.Covariance(
+        data = transformed_cov_data3,
+        names = new_ch_names,
+        bads = raw.info["bads"],
+        nfree = covariance.nfree,
+        projs = raw.info['projs']
+        )
+
+    return transformed_covariance
+
+
+
+sss_data_cov = change_of_cov_basis_into_sss(data_cov, pS_final)
+sss_noise_cov = change_of_cov_basis_into_sss_and_drop_off_diag_terms(noise_cov, pS_final)
+
+sss_noise_cov_diag  = change_of_cov_basis_into_sss(noise_cov, pS_final)
 
 
 # regularize data cov
@@ -334,36 +411,25 @@ sss_noise_cov = change_of_cov_basis_into_sss(noise_cov, pS_from_S_no_bads)
 reg_sss_data_cov = mne.cov.regularize(sss_data_cov, sss_raw.info)
 
 
-# condition number
-print(np.linalg.cond(sss_data_cov["data"],None))
-print(np.linalg.cond(reg_sss_data_cov["data"],None))
-print(np.linalg.cond(sss_noise_cov["data"],None))
-
-
-# computing rank
-    #mne.compute_rank(sss_noise_cov, info= sss_raw.info)
-    #mne.compute_rank(sss_data_cov, info= sss_raw.info)
-
 
 # plotting cov
-sss_data_cov.plot(sss_raw.info, proj=False)
-reg_sss_data_cov.plot(sss_raw.info, proj=False)
-sss_noise_cov.plot(sss_raw.info, proj=False)
+# sss_data_cov.plot(sss_raw.info, proj=False)
+# #reg_sss_data_cov.plot(sss_raw.info, proj=False)
+# sss_noise_cov.plot(sss_raw.info, proj=False)
 
+# sss_noise_cov_diag.plot(sss_raw.info, proj=False)
 
 # %%
 
 #changing lead fields
 
-# nchan needs to change. 
-# data of solutions needs to change. 
-# does info need to change?
 
 def change_of_lead_fields_basis(fwd, pS, sss_ch):
     # getting attributes of forward
     forward_copy = fwd.copy()
     sol = forward_copy['sol']
     data = sol['data']
+
 
     # transforming data
     lead_field_list = []
@@ -388,7 +454,7 @@ def change_of_lead_fields_basis(fwd, pS, sss_ch):
     forward_copy['nchan'] = new_n_chan
     
     # updating info
-    # getting rid of extre channels
+    # getting rid of extra channels
     mapping = {}
     for n in range(n_use_in):
         ch_number = n + 1
@@ -410,7 +476,9 @@ def change_of_lead_fields_basis(fwd, pS, sss_ch):
     
     return final_sss_forward
 
-sss_forward = change_of_lead_fields_basis(forward, n_pS_from_S, sss_channels)
+
+
+sss_forward = change_of_lead_fields_basis(forward, pS_final, sss_channels)
 
 
 
@@ -421,7 +489,6 @@ sss_forward = change_of_lead_fields_basis(forward, n_pS_from_S, sss_channels)
 
 #%%
 # modifications before filter
-# sss_raw.info.normalize_proj()
 
 
 
@@ -431,15 +498,15 @@ sss_forward = change_of_lead_fields_basis(forward, n_pS_from_S, sss_channels)
 filters = make_lcmv(
     sss_raw.info,
     sss_forward,
-    reg_sss_data_cov,
+    sss_data_cov,
     reg=0.1,
-    noise_cov=sss_noise_cov,
+    noise_cov=sss_noise_cov_diag,
     pick_ori="max-power",
     weight_norm="unit-noise-gain",
-    rank='full',
+    rank=None,
 )
 
-src = forward["src"]
+src = fwd["src"]
 
 
 # vector lcmv
@@ -455,19 +522,26 @@ src = forward["src"]
    # )
 
 
-del forward
+
+
+
+del fwd
 
 # %%
 
 #using filter
 
-stc = mne.beamformer.apply_lcmv_cov(reg_sss_data_cov, filters)
+stc = mne.beamformer.apply_lcmv_cov(sss_data_cov, filters)
+
+# epoched covariance filter
+
 
 
 #stc_vector = apply_lcmv_cov(sss_data_cov, filters)
 
 del filters
-# del filters_vec
+
+
 
 
 # %%
@@ -483,14 +557,13 @@ kwargs = dict(
     verbose=True,
 )
 
+
+
 # %%
 
 #mri 2d slices
 
 stc.plot(mode="stat_map", clim=dict(kind="value", pos_lims=lims), **kwargs)
-
-
-
 
 
 
