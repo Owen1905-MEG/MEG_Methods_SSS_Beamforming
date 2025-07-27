@@ -15,6 +15,12 @@ from mne.datasets import sample
 import numpy as np
 import matplotlib.pyplot as plt
 
+from scipy.linalg import subspace_angles
+
+
+
+
+
 # %%
 
 
@@ -76,7 +82,7 @@ fwd = mne.make_forward_solution(
 data_path = sample.data_path()
 subjects_dir = data_path / "subjects"
 meg_path = data_path / "MEG" / "sample"
-raw_fname = meg_path / "sample_audvis_filt-0-40_raw.fif"
+raw_fname = meg_path / "sample_audvis_raw.fif"
 
 
 # for calibration etc.
@@ -148,20 +154,10 @@ forward.pick_channels(new_raw_ch_names)
 
 
 raw.rescale({"mag":100})
-# %%
-
-# getting evoked
-
-
-
-
-
-
-
 
 # %%
 
-# find 100 ms after strongest evoked take signal from each vector, find subspace angle between that vector and normalized column matrix of S
+# find 100 ms after stimulus of strongest evoked take signal from each vector, find subspace angle between that vector and normalized column matrix of S
 
 # tells us how well basis matches data
 
@@ -200,6 +196,86 @@ S_in = S[:, :n_use_in]
 pS_in = pS[:n_use_in]
 
 pS_in_T = pS_in.transpose()
+
+
+
+# %%
+
+# finding subspace angles between S and data
+
+data, times = raw[:]
+
+angles = subspace_angles(S, data)
+print(angles)
+
+# %%
+
+# getting angle between S basis vector and raw data channel vector
+
+
+# first, getting raw data over time to get strongest evoked signal
+
+event_id = 1  # those are the trials with left-ear auditory stimuli
+tmin, tmax = -0.2, 0.5
+events = mne.find_events(raw)
+
+# pick relevant channels
+raw.pick(["meg", "eog"])  # pick channels of interest
+
+# Create epochs
+proj = False  # already applied
+epochs = mne.Epochs(
+    raw,
+    events,
+    event_id,
+    tmin,
+    tmax,
+    baseline=(None, 0),
+    preload=True,
+    proj=proj,
+    reject=dict(grad=4000e-13, mag=4e-12, eog=150e-6),
+)
+
+# epochs.plot(['meg'])
+
+noise_cov_epochs = mne.compute_covariance(epochs, tmin=tmin, tmax=0, method="empirical")
+
+
+
+
+# making vector of strong evoked response from channel data
+
+
+# making vector of S basis vectors
+
+
+# getting angle between vectors
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# %%
 
 
 
@@ -398,12 +474,17 @@ def change_of_cov_basis_into_sss_and_drop_off_diag_terms(
 
     return transformed_covariance
 
-
+# covariances calculated using varing methods to use/compare
 
 sss_data_cov = change_of_cov_basis_into_sss(data_cov, pS_final)
-sss_noise_cov = change_of_cov_basis_into_sss_and_drop_off_diag_terms(noise_cov, pS_final)
 
-sss_noise_cov_diag  = change_of_cov_basis_into_sss(noise_cov, pS_final)
+sss_noise_cov_epochs = change_of_cov_basis_into_sss(noise_cov_epochs, pS_final)
+
+sss_noise_cov_epochs_diag = change_of_cov_basis_into_sss_and_drop_off_diag_terms(noise_cov_epochs, pS_final)
+
+sss_noise_cov  = change_of_cov_basis_into_sss(noise_cov, pS_final)
+
+sss_noise_cov_diag = change_of_cov_basis_into_sss_and_drop_off_diag_terms(noise_cov, pS_final)
 
 
 # regularize data cov
@@ -500,7 +581,7 @@ filters = make_lcmv(
     sss_forward,
     sss_data_cov,
     reg=0.1,
-    noise_cov=sss_noise_cov_diag,
+    noise_cov=sss_noise_cov_epochs,
     pick_ori="max-power",
     weight_norm="unit-noise-gain",
     rank=None,
