@@ -10,16 +10,10 @@ import os
 
 
 import mne
-from mne.beamformer import apply_lcmv_cov, make_lcmv
+from mne.beamformer import make_lcmv
 from mne.datasets import sample
 import numpy as np
 import matplotlib.pyplot as plt
-
-from scipy.linalg import subspace_angles
-
-
-
-
 
 # %%
 
@@ -35,81 +29,178 @@ subject = "sample"
 
 
 raw = mne.io.read_raw_fif(raw_fname, preload = True)
-raw.info["bads"] += ["MEG 2443"]
+raw.info["bads"] = ["MEG 2443"]
+raw.info["bads"] += ["MEG 2313"]
 
-# deleting projectors and rescaling magnetometers 
+# deleting projectors
 raw.del_proj()
 
 event_id = 1  # those are the trials with left-ear auditory stimuli
 tmin, tmax = -0.2, 0.5
 events = mne.find_events(raw)
 
-# pick relevant channels
-raw.pick(["meg", "eog"])  # pick channels of interest
+# picking channels
+raw.pick(["meg", "eog"])
 
 # Create epochs
-proj = False  # already applied
+proj = False  
 epochs = mne.Epochs(
     raw,
     events,
     event_id,
     tmin,
     tmax,
-    baseline=(None, 0),
+    baseline=None,
     preload=True,
     proj=proj,
-    reject=dict(grad=4000e-13, mag=4e-12, eog=150e-6),
+    reject=dict(grad=4000e-13, mag=4e-12, eog=150e-6)
 )
 
-evoked = epochs.average().crop(0.05, 0.15)
+evoked = epochs.average().crop(0.00,0.15)
+evoked.pick(picks="meg")
+evoked.drop_channels("MEG 2443")
+evoked.drop_channels("MEG 2313")
 
-# Visualize averaged sensor space data
-evoked.plot_joint()
+# %%
 
-# epochs.plot(['meg'])
+# Getting data covariances over different periods
+# and noise covariances from pre stimulus baseline period
 
 noise_cov_epochs = mne.compute_covariance(
-    epochs, tmin=tmin, tmax=0, method="empirical", keep_sample_mean = False
-                                          )
-noise_cov_epochs.plot(epochs.info)
-
-
-# %%
-
-# The transformation file obtained by coregistration
-trans = sample_dir / "sample_audvis_raw-trans.fif"
-
-info = mne.io.read_info(raw_fname)
-
-
-# %%
-surface = subjects_dir / subject / "bem" / "inner_skull.surf"
-vol_src = mne.setup_volume_source_space(
-    subject, subjects_dir=subjects_dir, surface=surface, add_interpolator=False
+    epochs, 
+    keep_sample_mean = False,
+    tmin=-0.20, 
+    tmax=0.0, 
+    method="empirical", 
+    scalings=dict(mag=1e15, grad=1e13, eeg=1e6)
 )
 
-# %%
-conductivity = (0.3,)  # for single layer
-# conductivity = (0.3, 0.006, 0.3)  # for three layers
-model = mne.make_bem_model(
-    subject="sample", ico=4, conductivity=conductivity, subjects_dir=subjects_dir
+noise_cov_epochs_kept_mean = mne.compute_covariance(
+    epochs, 
+    keep_sample_mean=True,
+    tmin=-0.20, 
+    tmax=0.0, 
+    method="empirical", 
+    scalings=dict(mag=1e15, grad=1e13, eeg=1e6)
 )
-bem = mne.make_bem_solution(model)
+
+# data cov from part of epochs from .01 to .15 s
+
+data_cov_epochs_15 = mne.compute_covariance(
+    epochs, 
+    keep_sample_mean = False,
+    tmin=0.01, 
+    tmax=.15, 
+    method="empirical", 
+    scalings=dict(mag=1e15, grad=1e13, eeg=1e6)
+    )
+
+data_cov_epochs_kept_mean_15 = mne.compute_covariance(
+    epochs, 
+    keep_sample_mean = True,
+    tmin=.01, 
+    tmax=.15, 
+    method="empirical", 
+    scalings=dict(mag=1e15, grad=1e13, eeg=1e6)
+    )
+
+
+# data cov from part of epochs from .01 to .20 s
+
+data_cov_epochs_20 = mne.compute_covariance(
+    epochs, 
+    keep_sample_mean = False,
+    tmin=0.01, 
+    tmax=.20, 
+    method="empirical", 
+    scalings=dict(mag=1e15, grad=1e13, eeg=1e6)
+    )
+
+data_cov_epochs_kept_mean_20 = mne.compute_covariance(
+    epochs, 
+    keep_sample_mean = True,
+    tmin=.01, 
+    tmax=.20, 
+    method="empirical", 
+    scalings=dict(mag=1e15, grad=1e13, eeg=1e6)
+    )
+
+
+# data cov from part of epochs from .01 to .25 s
+
+data_cov_epochs = mne.compute_covariance(
+    epochs, 
+    keep_sample_mean = False,
+    tmin=0.01, 
+    tmax=.25, 
+    method="empirical", 
+    scalings=dict(mag=1e15, grad=1e13, eeg=1e6)
+    )
+
+data_cov_epochs_kept_mean = mne.compute_covariance(
+    epochs, 
+    keep_sample_mean = True,
+    tmin=.01, 
+    tmax=.25, 
+    method="empirical", 
+    scalings=dict(mag=1e15, grad=1e13, eeg=1e6)
+    )
+
+
+# data cov using entire epochs
+
+data_cov_entire_epochs = mne.compute_covariance(
+    epochs, 
+    keep_sample_mean = False,
+    tmin=None, 
+    tmax=None, 
+    method="empirical", 
+    scalings=dict(mag=1e15, grad=1e13, eeg=1e6)
+    )
+
+data_cov_entire_epochs_kept_mean = mne.compute_covariance(
+    epochs, 
+    keep_sample_mean = True,
+    tmin=None, 
+    tmax=None, 
+    method="empirical", 
+    scalings=dict(mag=1e15, grad=1e13, eeg=1e6)
+    )
 
 
 # %%
 
-fwd = mne.make_forward_solution(
-    raw.info,
-    trans=trans,
-    src=vol_src,
-    bem=bem,
-    meg=True,
-    eeg=False,
-    mindist=5.0,
-    n_jobs=None,
-    verbose=True,
+# Making scaled evoked
+raw_scaled = raw.copy()
+
+raw_scaled.rescale({"mag":100})
+       
+                     
+proj = False
+epochs_scaled = mne.Epochs(
+    raw_scaled,
+    events,
+    event_id,
+    tmin=-0.2,
+    tmax=0.5,
+    baseline=None,
+    preload=True,
+    proj=proj,
+    reject=dict(grad=4000e-13, mag=4e-10, eog=150e-6)
 )
+
+evoked_scaled = epochs.average().crop(.00,.15)
+evoked_scaled.pick(picks="meg")
+evoked_scaled.drop_channels("MEG 2443")
+evoked_scaled.drop_channels("MEG 2313")
+
+
+# %%
+
+# getting forward solution
+outputfilefwd = 'my_forward_solution-fwd.fif'
+
+fwd = mne.read_forward_solution(outputfilefwd)
 
 
 # %%
@@ -128,12 +219,6 @@ sample_data_raw_file = os.path.join(
     sample_data_folder, "MEG", "sample", "sample_audvis_raw.fif"
 )
 
-raw = mne.io.read_raw_fif(raw_fname, preload = True)
-
-# get rid of unnecessary projectors
-
-raw.del_proj()
-
 
 # for using SSS with data from Elekta Neuromag® systems
 fine_cal_file = os.path.join(sample_data_folder, "SSS", "sss_cal_mgh.dat")
@@ -141,7 +226,8 @@ crosstalk_file = os.path.join(sample_data_folder, "SSS", "ct_sparse_mgh.fif")
 
 
 # find bad channels then input here using find_bad_channels_maxwell()
-raw.info["bads"] += ["MEG 2443"]
+raw.info["bads"] = ["MEG 2443"]
+raw.info["bads"] += ["MEG 2313"]
 
 raw.pick(['meg'])
 
@@ -159,16 +245,18 @@ new_raw_ch_names = good_channels_from_raw
 
 meg_channel_names = raw.ch_names
 
-bad_index = meg_channel_names.index("MEG 2443")
+bad_index1 = meg_channel_names.index("MEG 2443")
+bad_index2 = meg_channel_names.index("MEG 2313")
 
 
 # %%
 
-
-
 # get SSS basis and Covariance in SSS basis, multipole moments
 
-S, pS, reg_moments, n_use_in = mne.preprocessing.compute_maxwell_basis(raw.info)
+S, pS, reg_moments, n_use_in = mne.preprocessing.compute_maxwell_basis(
+    raw.info,
+    regularize=None
+    )
 
 S_in = S[:, :n_use_in]
 
@@ -180,31 +268,7 @@ pS_in_T = pS_in.transpose()
 
 # %%
 
-# finding angle between S basis and data
-
-# data, times = raw.get_data(return_times=True)
-# print(times)
-
-# print(data.shape)
-# print(times.shape)
-
-
-# angle_list = []
-
-# for i in range(np.shape(data)[1]):
-#     data_col = data[:, i, None]
-#     angle = subspace_angles(S, data_col)
-#     print(angle)
-#     angle_list.append(angle)
-    
-# min_angle = min(angle_list)
-# max_angle = max(angle_list)
-# print(min_angle)
-# print(max_angle)
-
-# %%
-
-# rescale gradiometers by 100
+# Lead fields rescaling gradiometers by 100
 
 def mag_scaling_lead_field_update(fwd, mag_picks):
     # getting attributes of forward
@@ -225,28 +289,24 @@ def mag_scaling_lead_field_update(fwd, mag_picks):
 
 forward = mag_scaling_lead_field_update(fwd, mag_picks)
 
-
-
+# picking good channels from forward
 forward.pick_channels(new_raw_ch_names)
 
 
-#raw.rescale({"mag":100})
+# %%
+
+# Computing data covariance from raw. MNE python automatically scales grad and mag to same unit
+# Note to self: raw is not time centered, function below will subtract mean
+
+data_cov = mne.compute_raw_covariance(
+    raw,
+    scalings=dict(mag=1e15, grad=1e13, eeg=1e6)
+    )
 
 
 # %%
 
-# computing covariances. MNE python automatically scales grad and mag to same unit
-data_cov = mne.compute_raw_covariance(raw)
-noise_cov = mne.compute_raw_covariance(raw, tmin = 0, tmax = .9)
-
-data_cov.plot(raw.info)
-
-# %%
-
-
-
-
-# column normalization of S
+# Column normalization of S
 
 ST_S = S.transpose() @ S
 print(np.linalg.cond(ST_S,None))
@@ -262,11 +322,14 @@ print(np.linalg.cond(ST_S_norm,None))
 
 
 
-# removing column vectors to reduce condition number of S transpose @ S
+# Removing column vectors to reduce condition number of S transpose @ S 
+# according to Vrba, J., Taulu, S., Nenonen, J. et al. Signal Space Separation Beamformer. Brain Topogr 23, 128–133 (2010). https://doi.org/10.1007/s10548-009-0120-7
 
 reduced_S = n_S.copy()
 
 ST_S = reduced_S.transpose() @ reduced_S
+
+new_n_use_in = n_use_in
 
 while np.linalg.cond(ST_S, None) >= 10**5:
     cond_compare_list =[]
@@ -283,59 +346,33 @@ while np.linalg.cond(ST_S, None) >= 10**5:
 
     min_value = min(cond_compare_list)
     min_index = cond_compare_list.index(min_value)
+    new_n_use_in = n_use_in - 1
+    print(new_n_use_in)
+    print(min_index)
     reduced_S = np.delete(reduced_S, min_index, axis=1)
     ST_S = reduced_S.transpose() @ reduced_S
     print(f"Current condition number: {np.linalg.cond(ST_S, None):.2e}")
 
 
-
-# doing above to S_in
-
-# reduced_S_in = S_in.copy()
-# ST_S = reduced_S_in.transpose() @ reduced_S_in
-
-# while np.linalg.cond(ST_S, None) >= 10**5:
-#     cond_compare_list =[]
-#     for n in range(reduced_S_in.shape[1]):
-#         reduced_S_in_copy = reduced_S_in.copy()
-#         reduced_S_in_n = np.delete(reduced_S_in_copy, n, axis=1)
-#         ST_S = reduced_S_in_n.transpose() @ reduced_S_in_n
-#         cond_n = np.linalg.cond(ST_S, None)
-#         cond_compare_list.append(cond_n)
-    
-#     if not cond_compare_list :
-#         print("cond_compare_list is empty. Breaking loop.")
-#         break 
-
-#     min_value = min(cond_compare_list)
-#     min_index = cond_compare_list.index(min_value)
-#     reduced_S_in = np.delete(reduced_S_in, min_index, axis=1)
-#     ST_S = reduced_S_in.transpose() @ reduced_S_in
-#     print(f"Current condition number: {np.linalg.cond(ST_S, None):.2e}")
+# calculating our own pseudo inverse from S
+pS_from_S = np.linalg.pinv(reduced_S)
 
 
-# calculating our own pseudo inverse from S_in
-pS_from_S = np.linalg.pinv(n_S)
-
-
-#finding column to cut in n_pS as 306 -> 305 to fit covariance
-
+#finding column to cut in pS as 306 -> 304 to fit covariance
 meg_channel_names = raw.ch_names
 
-bad_index = meg_channel_names.index("MEG 2443")
-
+bad_index1 = meg_channel_names.index("MEG 2443")
+bad_index2 = meg_channel_names.index("MEG 2313")
 
 
 # cutting bad column from pS
-
-pS_from_S_no_bads = np.delete(pS_from_S, bad_index, 1)
+pS_from_S_no_bads = np.delete(pS_from_S, (bad_index1, bad_index2), 1)
 
 # getting final pS internal
-
-pS_final = pS_from_S_no_bads[:n_use_in, :]
+pS_final = pS_from_S_no_bads[:new_n_use_in, :]
 
 sss_channels = []
-for n in range(n_use_in):
+for n in range(new_n_use_in):
     ch_number = n + 1
     sss_channels.append("MEG " + f"{ch_number}".zfill(4))
     
@@ -343,20 +380,20 @@ for n in range(n_use_in):
     
 # %%
 
-# updating raw
+# Updating raw info to sss basis
 
 def change_of_raw_info_to_sss(raw, old_channel_names, sss_channels):
     new_raw = raw.copy()
     
     # modifying  raw attribute ch_names
     # dropping channels down to n_use_in
-    raw_channels_to_drop = raw.info['ch_names'][n_use_in:]
+    raw_channels_to_drop = raw.info['ch_names'][new_n_use_in:]
     new_raw.drop_channels(raw_channels_to_drop)
     
     
     # rename channels
     ch_dict_mapping = {}
-    for n in range(n_use_in):
+    for n in range(new_n_use_in):
         ch_dict_mapping[raw.info['ch_names'][n]] = sss_channels[n]
     new_raw.rename_channels(ch_dict_mapping)
 
@@ -371,27 +408,65 @@ def change_of_raw_info_to_sss(raw, old_channel_names, sss_channels):
 sss_info_raw = change_of_raw_info_to_sss(raw, new_raw_ch_names, sss_channels)    
 
 
-# getting attributes for transformation of raw data
-
-sss_raw_info = sss_info_raw.info
-data, times = raw.get_data(return_times=True)
-
-data_no_bads = np.delete(data, bad_index, 0)
+# %%
+# Creating raw with sss basis data and info
 
 
-list_data = []
-for t in range(166800):
-    sss_data_col = pS_final @ data_no_bads[:, t]
-    reshaped_sss_col = np.reshape(sss_data_col, (sss_data_col.shape[0],1))
-    list_data.append(reshaped_sss_col)
+# # transforming raw data to sss basis
 
-sss_data_in_tuple = tuple(list_data)
-sss_data = np.concatenate(sss_data_in_tuple, axis = 1)
-print(sss_data.shape)
+# sss_raw_info = sss_info_raw.info
+
+# data, times = raw.get_data(return_times=True)
+
+# # 168800 time points for reference
+
+
+# # deleting bad channels from data and transforming to sss basis
+
+# data_no_bads = np.delete(data, (bad_index1, bad_index2), 0)
+
+# sss_data = pS_final @ data_no_bads
     
-sss_raw = mne.io.RawArray(sss_data, sss_info_raw.info, copy = 'info')
 
-# pass through maxwellfilter to then use info for lcmv 
+# # creating raw in sss basis
+# sss_raw = mne.io.RawArray(sss_data, sss_raw_info, copy = 'info')
+
+# %%
+
+# # Creating Evoked in SSS basis using sss_raw
+# # Note: not time centered
+# # For some reason below evoked when applied using filter provides
+# # weaker and seemingly incorrect stc, applying pS to evoked data resolves this
+
+
+# sss_epochs = mne.Epochs(
+#     sss_raw,
+#     events,
+#     event_id,
+#     tmin=-.2,
+#     tmax=.5,
+#     baseline=None,
+#     preload=True,
+#     proj=False,
+# )
+
+# sss_evoked_from_sss_raw = sss_epochs.average().crop(0.00,0.15)
+
+# %%
+
+
+# Alternative Evoked in SSS basis for when applying filter
+# Note: in application, scaling evoked seems to have no impact on stc after beamforming
+
+# transforming evoked to SSS basis
+evoked_data = evoked.get_data()
+sss_data_evoked = pS_final @ evoked_data
+sss_evoked = mne.EvokedArray(sss_data_evoked, sss_info_raw.info)
+
+# evoked scaled to SSS basis
+evoked_scaled_data = evoked_scaled.get_data()
+sss_data_evoked_scaled = pS_final @ evoked_scaled_data
+sss_evoked_scaled = mne.EvokedArray(sss_data_evoked_scaled, sss_info_raw.info)
 
 # %%
 
@@ -409,6 +484,7 @@ def change_of_cov_basis_into_sss(
     #getting new attributes
     transformed_cov_data1 = cov_data @ pS_T
     transformed_cov_data2 = pS_final @ transformed_cov_data1
+    
     
     new_n_channels = transformed_cov_data2.shape[0]
     new_ch_names = [f'MEG {i+1:04d}' for i in range(new_n_channels)]
@@ -456,31 +532,53 @@ def change_of_cov_basis_into_sss_and_drop_off_diag_terms(
 
     return transformed_covariance
 
-# covariances calculated using varing methods to use/compare
+# covariances calculated using different periods and with/without mean subtracted
+
+
+# data cov from raw
 
 sss_data_cov = change_of_cov_basis_into_sss(data_cov, pS_final)
+
+# noise cov from baseline
 
 sss_noise_cov_epochs = change_of_cov_basis_into_sss(noise_cov_epochs, pS_final)
 
 sss_noise_cov_epochs_diag = change_of_cov_basis_into_sss_and_drop_off_diag_terms(noise_cov_epochs, pS_final)
 
-sss_noise_cov  = change_of_cov_basis_into_sss(noise_cov, pS_final)
-
-sss_noise_cov_diag = change_of_cov_basis_into_sss_and_drop_off_diag_terms(noise_cov, pS_final)
+sss_noise_cov_epochs_kept_mean = change_of_cov_basis_into_sss(noise_cov_epochs_kept_mean, pS_final)
 
 
+# data cov .01 to .15
 
 
-# plotting cov
-sss_data_cov.plot(sss_raw.info, proj=False)
-sss_noise_cov.plot(sss_raw.info, proj=False)
-sss_noise_cov_epochs.plot(sss_raw.info, proj=False)
+sss_data_cov_epochs_15 = change_of_cov_basis_into_sss(data_cov_epochs_15, pS_final)
 
-# sss_noise_cov_diag.plot(sss_raw.info, proj=False)
+sss_data_cov_epochs_kept_mean_15 = change_of_cov_basis_into_sss(data_cov_epochs_kept_mean_15, pS_final)
+
+
+# data cov .01 to .20
+
+sss_data_cov_epochs_20 = change_of_cov_basis_into_sss(data_cov_epochs_20, pS_final)
+
+sss_data_cov_epochs_kept_mean_20 = change_of_cov_basis_into_sss(data_cov_epochs_kept_mean_20, pS_final)
+
+
+# data cov .01 to .25
+
+sss_data_cov_epochs = change_of_cov_basis_into_sss(data_cov_epochs, pS_final)
+
+sss_data_cov_epochs_kept_mean = change_of_cov_basis_into_sss(data_cov_epochs_kept_mean, pS_final)
+
+
+# data cov over all epochs
+
+sss_data_cov_entire_epochs = change_of_cov_basis_into_sss(data_cov_entire_epochs, pS_final)
+
+sss_data_cov_entire_epochs_kept_mean = change_of_cov_basis_into_sss(data_cov_entire_epochs_kept_mean, pS_final)
 
 # %%
 
-#changing lead fields
+# Transforming lead fields and updating info
 
 
 def change_of_lead_fields_basis(fwd, pS, sss_ch):
@@ -501,9 +599,9 @@ def change_of_lead_fields_basis(fwd, pS, sss_ch):
     
    # creating attributes for new forward instance
     new_channels = []
-    new_n_chan = n_use_in
+    new_n_chan = new_n_use_in
     
-    for n in range(n_use_in):
+    for n in range(new_n_use_in):
         ch_number = n + 1
         new_channels.append("MEG " + f"{ch_number}".zfill(4))
     
@@ -515,7 +613,7 @@ def change_of_lead_fields_basis(fwd, pS, sss_ch):
     # updating info
     # getting rid of extra channels
     mapping = {}
-    for n in range(n_use_in):
+    for n in range(new_n_use_in):
         ch_number = n + 1
         mapping[forward_copy.ch_names[n]] = "MEG " + f"{ch_number}".zfill(4)
     mne.channels.rename_channels(forward_copy['info'], mapping)
@@ -523,116 +621,120 @@ def change_of_lead_fields_basis(fwd, pS, sss_ch):
     #Picking channels
     final_sss_forward = mne.pick_channels_forward(forward_copy, sss_channels)
     
-    
-    # setting names
-  
-    # does forward.info need to be updated/changed? yes, but what?
-    
-    # updating forward.info
-    #forward_copy['info']['ch_names'] = sss_channels
-    #forward_copy['info']['nchan'] = new_n_chan
-    
-    
     return final_sss_forward
 
+# forward from sample for comparison
+fwd_fname = meg_path / "sample_audvis-meg-vol-7-fwd.fif"
+forward_sample = mne.read_forward_solution(fwd_fname)
 
+# scaling lead fields
+forward_sample_scaled = mag_scaling_lead_field_update(forward_sample, mag_picks)
+# picking channels
+forward_sample_scaled.pick_channels(new_raw_ch_names)
+#transforming with S basis
+sss_forward_sample = change_of_lead_fields_basis(forward_sample_scaled, pS_final, sss_channels)
+
+# forward computed previously
 
 sss_forward = change_of_lead_fields_basis(forward, pS_final, sss_channels)
 
-
-
-# %%
-# making lcmv. (what should reg be?)
-
-
-
 #%%
-# modifications before filter
+
+# Filters 
+# Note: rank of noise is 79
+# Note: reg parameter at .0 produces very similar stc
 
 
-
-
-# making filter and getting source space
-
+# data cov over .01 to .15 s
 filters = make_lcmv(
-    sss_raw.info,
+    sss_info_raw.info,
     sss_forward,
-    sss_data_cov,
+    sss_data_cov_epochs_kept_mean_15,
     reg=0.05,
-    noise_cov=sss_noise_cov_epochs_diag,
+    noise_cov=sss_noise_cov_epochs_kept_mean,
     pick_ori="max-power",
     weight_norm="unit-noise-gain",
     rank=None,
 )
 
+# data cov over .01 to .20 s
+filters1 = make_lcmv(
+    sss_info_raw.info,
+    sss_forward,
+    sss_data_cov_epochs_kept_mean_20,
+    reg=0.05,
+    noise_cov=sss_noise_cov_epochs_kept_mean,
+    pick_ori="max-power",
+    weight_norm="unit-noise-gain",
+    rank=None,
+)
+
+# data cov over .01 to .15 s
+filters2 = make_lcmv(
+    sss_info_raw.info,
+    sss_forward,
+    sss_data_cov_epochs_kept_mean,
+    reg=0.05,
+    noise_cov=sss_noise_cov_epochs_kept_mean,
+    pick_ori="max-power",
+    weight_norm="unit-noise-gain",
+    rank=None,
+)
+
+
+# data cov over entire epoch
+filters3 = make_lcmv(
+    sss_info_raw.info,
+    sss_forward,
+    sss_data_cov_entire_epochs_kept_mean,
+    reg=0.05,
+    noise_cov=sss_noise_cov_epochs_kept_mean,
+    pick_ori="max-power",
+    weight_norm="unit-noise-gain",
+    rank=None,
+)
+
+
+
 src = fwd["src"]
 
 
-# vector lcmv
-   # filters_vec = make_lcmv(
-       # sss_raw.info,
-      #  sss_forward,
-       # sss_data_cov,
-       # reg=0.05,
-      #  noise_cov=sss_noise_cov,
-       # pick_ori="vector",
-       # weight_norm="unit-noise-gain-invariant",
-       # rank='full',
-   # )
-
-
-
-
-
-del fwd
-
 # %%
 
-#using filter
+# Using filter on Evoked in SSS basis
 
-sss_raw.crop(7.55, tmax = 7.660)
+# using kept mean for all and data cov over just .01 to .15
+stc = mne.beamformer.apply_lcmv(sss_evoked_scaled, filters)
 
-stc = mne.beamformer.apply_lcmv_raw(sss_raw, filters)
+# using kept mean for all and data cov over just .01 to .20
+stc1 = mne.beamformer.apply_lcmv(sss_evoked_scaled, filters1)
 
-# epoched covariance filter
+# using kept mean for all and data cov over just .01 to .25
+stc2 = mne.beamformer.apply_lcmv(sss_evoked_scaled, filters2)
 
-
-
-#stc_vector = apply_lcmv_cov(sss_data_cov, filters)
-
-del filters
-
-
-
+# kept mean for all but data cov over all epochs
+stc3 = mne.beamformer.apply_lcmv(sss_evoked_scaled, filters3)
 
 # %%
 
 # visualizing 
 
-lims = [0.3, 0.45, 1.6]
+
+lims = [0.30, 0.45, 0.90]
 kwargs = dict(
     src=src,
     subject="sample",
     subjects_dir=subjects_dir,
-    initial_time=7.587,
+    initial_time=0.083,
     verbose=True,
 )
 
-
-
-# %%
-
-#mri 2d slices
-
 stc.plot(mode="stat_map", clim=dict(kind="value", pos_lims=lims), **kwargs)
 
+stc1.plot(mode="stat_map", clim=dict(kind="value", pos_lims=lims), **kwargs)
 
+stc2.plot(mode="stat_map", clim=dict(kind="value", pos_lims=lims), **kwargs)
 
-
-
-
-
-
-
+stc3.plot(mode="stat_map", clim=dict(kind="value", pos_lims=lims), **kwargs)
 
 
